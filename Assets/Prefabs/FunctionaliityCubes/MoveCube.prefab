@@ -13,7 +13,7 @@ GameObject:
   - component: {fileID: 8175732747107431412}
   - component: {fileID: 7735426227360730159}
   - component: {fileID: 3884453434998152907}
-  m_Layer: 0
+  m_Layer: 6
   m_Name: MoveCube
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -121,14 +121,5 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: ac22429059b16564e9fc7269dcad7d0d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  effect: 4
-  targetColour: {r: 1, g: 0, b: 0, a: 1}
-  scaleMultiplier: 1.5
-  scaleDuration: 0.5
-  rotateAxis: {x: 0, y: 1, z: 0}
-  rotateSpeed: 360
-  rotateDuration: 1
-  returnToStartRotation: 1
+  config: {fileID: 11400000, guid: aa11bb22cc33dd44ee55ff6677889905, type: 2}
   destination: {fileID: 0}
-  moveOffset: {x: 0, y: 0, z: 3}
-  moveDuration: 1

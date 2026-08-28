@@ -2,10 +2,10 @@ using UnityEngine;
 
 /// <summary>
 /// Attach to any GameObject with a Collider and Rigidbody to make it pickable.
-/// While the player holds left-click on this object, it floats in front of the camera.
-/// Requires the camera to have a "PickupHolder" tag or uses a default hold position.
-/// 
-/// Works with SimpleCameraController or any camera-based raycast setup.
+/// While held, the object floats in front of the camera.
+///
+/// Input is NOT read here. The player controller calls <see cref="Interact"/> to pick up,
+/// <see cref="RequestDrop"/> to drop, and <see cref="AdjustHoldDistance"/> to scroll.
 /// </summary>
 [RequireComponent(typeof(Rigidbody))]
 [RequireComponent(typeof(Collider))]
@@ -21,7 +21,7 @@ public class Pickable : MonoBehaviour, IInteractable
     [Tooltip("How quickly the object stops rotating when held.")]
     [SerializeField] private float rotationDamping = 5f;
 
-    [Header("Push / Pull (Mouse Wheel)")]
+    [Header("Push / Pull")]
     [Tooltip("How much the hold distance changes per scroll tick.")]
     [SerializeField] private float scrollSensitivity = 0.5f;
 
@@ -45,27 +45,6 @@ public class Pickable : MonoBehaviour, IInteractable
     {
         _rb = GetComponent<Rigidbody>();
         _defaultHoldDistance = holdDistance;
-    }
-
-    private void Update()
-    {
-        if (!_isHeld)
-            return;
-
-        // Drop the object when left-click is released
-        if (Input.GetMouseButtonUp(0))
-        {
-            Drop();
-            return;
-        }
-
-        // Mouse wheel to push/pull the held object
-        float scroll = Input.GetAxis("Mouse ScrollWheel");
-        if (scroll != 0f)
-        {
-            holdDistance += scroll * scrollSensitivity;
-            holdDistance = Mathf.Clamp(holdDistance, minHoldDistance, maxHoldDistance);
-        }
     }
 
     private void FixedUpdate()
@@ -95,6 +74,28 @@ public class Pickable : MonoBehaviour, IInteractable
         Pickup();
     }
 
+    /// <summary>
+    /// Called by the player controller when the drop input fires (e.g. mouse button up).
+    /// </summary>
+    public void RequestDrop()
+    {
+        if (_isHeld)
+            Drop();
+    }
+
+    /// <summary>
+    /// Called by the player controller when the scroll wheel input fires.
+    /// Positive delta pushes the object away, negative pulls it closer.
+    /// </summary>
+    public void AdjustHoldDistance(float delta)
+    {
+        if (!_isHeld)
+            return;
+
+        holdDistance += delta * scrollSensitivity;
+        holdDistance = Mathf.Clamp(holdDistance, minHoldDistance, maxHoldDistance);
+    }
+
     private void Pickup()
     {
         // Find the main camera as the hold reference
@@ -120,7 +121,6 @@ public class Pickable : MonoBehaviour, IInteractable
         _rb.angularDamping = 10f;
         _rb.collisionDetectionMode = CollisionDetectionMode.Continuous;
 
-        // Prevent the held object from pushing the player around
         _rb.interpolation = RigidbodyInterpolation.Interpolate;
 
         Debug.Log($"[Pickable] Picked up: {gameObject.name}");
