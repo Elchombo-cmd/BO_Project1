@@ -26,11 +26,31 @@ public class FirstPersonController : MonoBehaviour
 
     [Header("Interaction")]
     [SerializeField] private float interactRange = 3f;
+    [Tooltip("Layers the interaction trace is allowed to hit at all. Anything not on these " +
+             "layers is completely ignored by the trace. Keep this to the layer(s) your " +
+             "interactable objects and any solid walls that should block interaction live on.")]
     [SerializeField] private LayerMask interactableLayer = ~0;
+    [Tooltip("Layers treated as solid blockers: if one of these is hit before an interactable, " +
+             "the trace stops and nothing is interacted with (you can't reach through a wall). " +
+             "Colliders that are neither interactable nor on a blocking layer are skipped, so " +
+             "decoration meshes and triggers in front of an object don't get in the way.")]
+    [SerializeField] private LayerMask blockingLayers = 0;
+    [Tooltip("When enabled, trigger colliders are ignored by the interaction trace.")]
+    [SerializeField] private bool ignoreTriggers = true;
 
     [Header("Highlight / Glow")]
     [Tooltip("Color of the glow outline when looking at an interactable object.")]
     [SerializeField] private Color glowColor = new Color(1f, 0.8f, 0.2f, 1f);
+
+    [Header("Camera Position")]
+    [Tooltip("Distance between the very top of the capsule and the camera (eye) height, so the " +
+             "eyes sit just under the crown of the head. The capsule height is derived from the " +
+             "camera's height above the floor plus this value.")]
+    [SerializeField] private float eyeInset = 0.1f;
+
+    [Header("Capsule Collision")]
+    [Tooltip("Radius of the CharacterController capsule.")]
+    [SerializeField] private float capsuleRadius = 0.5f;
 
     [Header("References")]
     [SerializeField] private Transform cameraTransform;
@@ -43,6 +63,10 @@ public class FirstPersonController : MonoBehaviour
     private float _cameraYaw;
     private bool _isSprinting;
     private bool _hasSeparateCamera;
+
+    // Capsule dimensions derived from the camera height (see SyncCapsuleToCamera).
+    private float _capsuleHeight = 2f;
+    private Vector3 _capsuleCenter = new Vector3(0f, 1f, 0f);
 
     // Pickable tracking — lets us forward drop/scroll to the held object.
     private Pickable _heldPickable;
@@ -67,7 +91,47 @@ public class FirstPersonController : MonoBehaviour
 
         // Detect whether the camera is a separate child or the same object.
         _hasSeparateCamera = cameraTransform != null && cameraTransform != transform;
+
+        SyncCapsuleToCamera();
     }
+
+    /// <summary>
+    /// Sizes the CharacterController capsule so its top reaches the camera's height above the
+    /// floor. The camera's local Y (relative to the player root, which stands on the floor) is
+    /// the eye height; the capsule top is that plus <see cref="eyeInset"/>, and the center is
+    /// placed at half the height so the capsule bottom rests on the floor (local y = 0).
+    /// </summary>
+    private void SyncCapsuleToCamera()
+    {
+        if (_controller == null || !_hasSeparateCamera || cameraTransform == null)
+            return;
+
+        float eyeHeight = cameraTransform.localPosition.y;
+        float newHeight = eyeHeight + eyeInset;
+
+        // Guard against degenerate capsules: height must be at least 2 * radius.
+        newHeight = Mathf.Max(newHeight, capsuleRadius * 2f);
+
+        _capsuleHeight = newHeight;
+        _capsuleCenter = new Vector3(0f, newHeight * 0.5f, 0f);
+
+        _controller.height = _capsuleHeight;
+        _controller.radius = capsuleRadius;
+        _controller.center = _capsuleCenter;
+    }
+
+#if UNITY_EDITOR
+    private void OnValidate()
+    {
+        // Live-update in the editor while tweaking the camera position or radius.
+        if (_controller == null)
+            _controller = GetComponent<CharacterController>();
+
+        _hasSeparateCamera = cameraTransform != null && cameraTransform != transform;
+
+        SyncCapsuleToCamera();
+    }
+#endif
 
     private void Start()
     {
@@ -153,16 +217,12 @@ public class FirstPersonController : MonoBehaviour
 
         Ray ray = new Ray(cameraTransform.position, cameraTransform.forward);
 
-        if (Physics.Raycast(ray, out RaycastHit hit, interactRange, interactableLayer))
+        if (TryTraceInteractable(ray, out RaycastHit hit, out IInteractable interactable))
         {
-            GameObject hitObj = hit.collider.gameObject;
-
-            // Only highlight objects that have an IInteractable component
-            if (hitObj.GetComponent<IInteractable>() == null)
-            {
-                ClearHighlight();
-                return;
-            }
+            // Highlight the interactable's GameObject (the collider may be on a child).
+            GameObject hitObj = (interactable as Component) != null
+                ? ((Component)interactable).gameObject
+                : hit.collider.gameObject;
 
             // Same object as before — no change needed
             if (_currentHighlighted == hitObj)
@@ -225,24 +285,72 @@ public class FirstPersonController : MonoBehaviour
 
         Ray ray = new Ray(cameraTransform.position, cameraTransform.forward);
 
-        if (Physics.Raycast(ray, out RaycastHit hit, interactRange, interactableLayer))
+        if (TryTraceInteractable(ray, out RaycastHit hit, out IInteractable interactable))
         {
             // If we hit a held Pickable, ignore (it will handle its own drop)
             Pickable pickable = hit.collider.GetComponent<Pickable>();
             if (pickable != null && pickable.IsHeld)
                 return;
 
-            IInteractable interactable = hit.collider.GetComponent<IInteractable>();
-            if (interactable != null)
-            {
-                interactable.Interact();
-                Debug.Log($"Interacted with: {hit.collider.gameObject.name}");
+            interactable.Interact();
+            Debug.Log($"Interacted with: {hit.collider.gameObject.name}");
 
-                // Track if we just picked up a Pickable so we can forward drop/scroll.
-                if (pickable != null && pickable.IsHeld)
-                    _heldPickable = pickable;
-            }
+            // Track if we just picked up a Pickable so we can forward drop/scroll.
+            if (pickable != null && pickable.IsHeld)
+                _heldPickable = pickable;
         }
+    }
+
+    /// <summary>
+    /// Traces along <paramref name="ray"/> up to <see cref="interactRange"/> and returns the
+    /// nearest <see cref="IInteractable"/>, ignoring non-blocking, non-interactable geometry
+    /// (decoration meshes, triggers) that sit in front of it. If a collider on
+    /// <see cref="blockingLayers"/> is encountered before any interactable, the trace stops and
+    /// returns false — you cannot interact through a solid wall.
+    /// </summary>
+    /// <param name="ray">The trace ray, typically from the camera.</param>
+    /// <param name="hit">The hit that resolved to an interactable (only valid when true).</param>
+    /// <param name="interactable">The interactable found (only valid when true).</param>
+    /// <returns>True if an unobstructed interactable was found.</returns>
+    private bool TryTraceInteractable(Ray ray, out RaycastHit hit, out IInteractable interactable)
+    {
+        hit = default;
+        interactable = null;
+
+        QueryTriggerInteraction triggerMode =
+            ignoreTriggers ? QueryTriggerInteraction.Ignore : QueryTriggerInteraction.Collide;
+
+        RaycastHit[] hits = Physics.RaycastAll(ray, interactRange, interactableLayer, triggerMode);
+        if (hits.Length == 0)
+            return false;
+
+        // Nearest first so we respect what's physically in front.
+        System.Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
+
+        foreach (RaycastHit h in hits)
+        {
+            // A solid blocker in the way stops the trace — no reaching through walls.
+            if (IsOnLayerMask(h.collider.gameObject.layer, blockingLayers))
+                return false;
+
+            IInteractable candidate = h.collider.GetComponentInParent<IInteractable>();
+            if (candidate != null)
+            {
+                hit = h;
+                interactable = candidate;
+                return true;
+            }
+
+            // Otherwise it's a non-blocking, non-interactable mesh/trigger — skip and continue.
+        }
+
+        return false;
+    }
+
+    /// <summary>Returns true if the given layer index is included in the mask.</summary>
+    private static bool IsOnLayerMask(int layer, LayerMask mask)
+    {
+        return (mask.value & (1 << layer)) != 0;
     }
 
     #endregion

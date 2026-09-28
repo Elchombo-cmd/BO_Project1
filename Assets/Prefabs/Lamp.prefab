@@ -313,9 +313,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 9e77376c25e11c24cba9b3b1ffd38fa5, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  holdDistance: 2
+  holdDistance: 0.5
   followSpeed: 10
   rotationDamping: 5
   scrollSensitivity: 0.5
-  minHoldDistance: 1
+  minHoldDistance: 0.5
   maxHoldDistance: 8
